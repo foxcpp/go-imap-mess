@@ -8,32 +8,32 @@ import (
 	"github.com/emersion/go-imap/backend"
 )
 
-type flagsUpdate struct{
+type flagsUpdate struct {
 	silentFor *MailboxHandle
-	uid uint32
-	newFlags []string
+	uid       uint32
+	newFlags  []string
 }
 
-type sharedHandle struct{
+type sharedHandle struct {
 	key string
-	
+
 	connsLock sync.RWMutex
-	conns map[backend.Conn]struct{}
-	
-	expunged chan uint32
-	created chan uint32
+	conns     map[backend.Conn]struct{}
+
+	expunged     chan uint32
+	created      chan uint32
 	flagsUpdated chan flagsUpdate
 }
 
-type MailboxHandle struct{
-	m *Manager
+type MailboxHandle struct {
+	m      *Manager
 	shared *sharedHandle
-	conn backend.Conn
-	
-	lock sync.RWMutex
-	uidMap []uint32
+	conn   backend.Conn
+
+	lock           sync.RWMutex
+	uidMap         []uint32
 	pendingCreated []uint32
-	pendingFlags []flagsUpdate
+	pendingFlags   []flagsUpdate
 }
 
 func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSet, error) {
@@ -42,7 +42,7 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 		// just pass all seqsets into this function.
 		return set, nil
 	}
-	
+
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
 
@@ -54,11 +54,11 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 		}
 		result.AddRange(seq.Start, seq.Stop)
 	}
-	
+
 	if len(result.Set) == 0 {
 		return nil, errors.New("No messages matched")
 	}
-	
+
 	return result, nil
 
 }
@@ -78,8 +78,9 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 			// Likely the corresponding message was expunged.
 			continue
 		}
-		updMsg := imap.NewMessage(seq, []imap.FetchItem{imap.FetchFlags})
+		updMsg := imap.NewMessage(seq, []imap.FetchItem{imap.FetchFlags, imap.FetchUid})
 		updMsg.Flags = upd.newFlags
+		updMsg.Uid = upd.uid
 		handle.conn.SendUpdate(&backend.MessageUpdate{
 			Message: updMsg,
 		})
@@ -119,13 +120,13 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 	defer handle.shared.connsLock.RUnlock()
 
 	upd := flagsUpdate{
-		uid:       uid,
-		newFlags:  newFlags,
+		uid:      uid,
+		newFlags: newFlags,
 	}
 	if silent {
 		upd.silentFor = handle
 	}
-	
+
 	for range handle.shared.conns {
 		handle.shared.flagsUpdated <- upd
 	}
@@ -134,7 +135,7 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 func (handle *MailboxHandle) Removed(uid uint32) {
 	handle.shared.connsLock.RLock()
 	defer handle.shared.connsLock.RUnlock()
-	
+
 	for range handle.shared.conns {
 		handle.shared.expunged <- uid
 	}
@@ -162,12 +163,12 @@ func (handle *MailboxHandle) listenUpdates() {
 func (handle *MailboxHandle) Close() {
 	handle.m.handlesLock.Lock()
 	defer handle.m.handlesLock.Unlock()
-	
+
 	handle.shared.connsLock.Lock()
 	defer handle.shared.connsLock.Unlock()
-	
+
 	delete(handle.shared.conns, handle.conn)
-	
+
 	if len(handle.shared.conns) == 0 {
 		delete(handle.m.handles, handle.shared.key)
 	}
