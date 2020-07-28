@@ -17,12 +17,8 @@ type flagsUpdate struct {
 type sharedHandle struct {
 	key string
 
-	connsLock sync.RWMutex
-	conns     map[backend.Conn]struct{}
-
-	expunged     chan uint32
-	created      chan uint32
-	flagsUpdated chan flagsUpdate
+	handlesLock sync.RWMutex
+	handles     map[*MailboxHandle]struct{}
 }
 
 type MailboxHandle struct {
@@ -36,15 +32,28 @@ type MailboxHandle struct {
 	pendingFlags   []flagsUpdate
 }
 
-func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSet, error) {
-	if uid {
-		// This is done for usage convenience - backend could
-		// just pass all seqsets into this function.
-		return set, nil
-	}
+var ErrNoMessages = errors.New("No messages matched")
 
+func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSet, error) {
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
+
+	if len(handle.uidMap) == 0 {
+		return &imap.SeqSet{}, ErrNoMessages
+	}
+
+	if uid {
+		for i, seq := range set.Set {
+			if seq.Start == 0 {
+				set.Set[i].Start = handle.uidMap[len(handle.uidMap)-1]
+			}
+			if seq.Stop == 0 {
+				set.Set[i].Stop = handle.uidMap[len(handle.uidMap)-1]
+			}
+		}
+
+		return set, nil
+	}
 
 	result := &imap.SeqSet{}
 	for _, seq := range set.Set {
@@ -56,7 +65,7 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 	}
 
 	if len(result.Set) == 0 {
-		return nil, errors.New("No messages matched")
+		return &imap.SeqSet{}, ErrNoMessages
 	}
 
 	return result, nil
@@ -116,9 +125,6 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 }
 
 func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent bool) {
-	handle.shared.connsLock.RLock()
-	defer handle.shared.connsLock.RUnlock()
-
 	upd := flagsUpdate{
 		uid:      uid,
 		newFlags: newFlags,
@@ -127,36 +133,31 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 		upd.silentFor = handle
 	}
 
-	for range handle.shared.conns {
-		handle.shared.flagsUpdated <- upd
+	handle.shared.handlesLock.RLock()
+	defer handle.shared.handlesLock.RUnlock()
+
+	for hndl := range handle.shared.handles {
+		if upd.silentFor == handle {
+			continue
+		}
+
+		hndl.lock.Lock()
+		hndl.pendingFlags = append(hndl.pendingFlags)
+		hndl.lock.Unlock()
 	}
 }
 
 func (handle *MailboxHandle) Removed(uid uint32) {
-	handle.shared.connsLock.RLock()
-	defer handle.shared.connsLock.RUnlock()
+	handle.shared.handlesLock.RLock()
+	defer handle.shared.handlesLock.RUnlock()
 
-	for range handle.shared.conns {
-		handle.shared.expunged <- uid
-	}
-}
-
-func (handle *MailboxHandle) listenUpdates() {
-	for {
-		select {
-		case newUID := <-handle.shared.created:
-			handle.pendingCreated = append(handle.pendingCreated, newUID)
-		case expungedUID := <-handle.shared.expunged:
-			seq, ok := handle.uidAsSeq(expungedUID)
-			if ok {
-				handle.uidMap[seq] = 0
-			}
-		case upd := <-handle.shared.flagsUpdated:
-			if upd.silentFor == handle {
-				continue
-			}
-			handle.pendingFlags = append(handle.pendingFlags, upd)
+	for hndl := range handle.shared.handles {
+		hndl.lock.Lock()
+		seq, ok := handle.uidAsSeq(uid)
+		if ok {
+			handle.uidMap[seq] = 0
 		}
+		hndl.lock.Unlock()
 	}
 }
 
@@ -164,12 +165,12 @@ func (handle *MailboxHandle) Close() {
 	handle.m.handlesLock.Lock()
 	defer handle.m.handlesLock.Unlock()
 
-	handle.shared.connsLock.Lock()
-	defer handle.shared.connsLock.Unlock()
+	handle.shared.handlesLock.Lock()
+	defer handle.shared.handlesLock.Unlock()
 
-	delete(handle.shared.conns, handle.conn)
+	delete(handle.shared.handles, handle)
 
-	if len(handle.shared.conns) == 0 {
+	if len(handle.shared.handles) == 0 {
 		delete(handle.m.handles, handle.shared.key)
 	}
 }
