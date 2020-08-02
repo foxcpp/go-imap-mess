@@ -41,7 +41,7 @@ func uidToSeq(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {
 		return uselessSeq, false
 	} else {
 		if initial.Start == initial.Stop {
-			return imap.Seq{Start: seq.Start, Stop: seq.Start}, false
+			return imap.Seq{Start: seq.Start, Stop: seq.Start}, true
 		}
 
 		seq.Stop = uint32(sort.Search(len(uidMap), func(i int) bool {
@@ -56,7 +56,7 @@ func uidToSeq(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {
 		return uselessSeq, false
 	}
 
-	return seq, false
+	return seq, true
 }
 
 func seqToUid(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {
@@ -87,7 +87,7 @@ func seqToUid(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {
 	}
 
 	if initial.Start == initial.Stop {
-		return imap.Seq{Start: seq.Start, Stop: seq.Start}, false
+		return imap.Seq{Start: seq.Start, Stop: seq.Start}, true
 	}
 
 	for {
@@ -106,5 +106,5 @@ func seqToUid(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {
 		}
 	}
 
-	return seq, false
+	return seq, true
 }
