@@ -1,4 +1,4 @@
-module github.com/foxcpp/go-imap-sequpdate
+module github.com/foxcpp/go-imap-mess
 
 go 1.14
 

@@ -1,11 +1,11 @@
-package sequpdate_test
+package mess_test
 
 import (
 	"math/rand"
 	"testing"
 
 	backendtests "github.com/foxcpp/go-imap-backend-tests"
-	"github.com/foxcpp/go-imap-sequpdate/memory"
+	"github.com/foxcpp/go-imap-mess/memory"
 )
 
 func initBackend() backendtests.Backend {

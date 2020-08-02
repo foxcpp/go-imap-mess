@@ -1,4 +1,4 @@
-package sequpdate
+package mess
 
 import (
 	"sync"
