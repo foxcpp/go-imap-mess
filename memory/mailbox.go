@@ -98,6 +98,10 @@ func (mbox *SelectedMailbox) Poll(expunge bool) error {
 	return nil
 }
 
+func (mbox *SelectedMailbox) Idle(done <-chan struct{}) {
+	mbox.handle.Idle(done)
+}
+
 func (mbox *SelectedMailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items []imap.FetchItem, ch chan<- *imap.Message) error {
 	shouldSetSeen := false
 	for _, item := range items {

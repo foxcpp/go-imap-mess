@@ -9,8 +9,8 @@ import (
 )
 
 type flagsUpdate struct {
-	uid       uint32
-	newFlags  []string
+	uid      uint32
+	newFlags []string
 }
 
 type sharedHandle struct {
@@ -26,10 +26,11 @@ type MailboxHandle struct {
 	conn   backend.Conn
 
 	lock           sync.RWMutex
+	idleerNotify   chan struct{}
 	uidMap         []uint32
 	recent         *imap.SeqSet
 	hasNewRecent   bool
-	recentCount	   uint32
+	recentCount    uint32
 	pendingExpunge imap.SeqSet
 	pendingCreated imap.SeqSet
 	pendingFlags   []flagsUpdate
@@ -60,7 +61,7 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 			if seq.Stop == 0 {
 				seq.Stop = handle.uidMap[len(handle.uidMap)-1]
 			}
-			
+
 			// Resolving certain UID sets may yield cases in which
 			// start value is bigger than stop. However, as opposed to
 			// seqnum sets, this is a valid and meaningful set
@@ -123,9 +124,30 @@ func (handle *MailboxHandle) ResolveCriteria(criteria *imap.SearchCriteria) {
 func (handle *MailboxHandle) UidAsSeq(uid uint32) (uint32, bool) {
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
-	
+
 	seq, ok := uidToSeq(handle.uidMap, imap.Seq{Start: uid, Stop: uid})
 	return seq.Start, ok
+}
+
+func (handle *MailboxHandle) Idle(done <-chan struct{}) {
+	handle.lock.Lock()
+	handle.idleerNotify = make(chan struct{}, 1)
+	handle.lock.Unlock()
+
+	defer func() {
+		handle.lock.Lock()
+		handle.idleerNotify = nil
+		handle.lock.Unlock()
+	}()
+
+	for {
+		select {
+		case <-handle.idleerNotify:
+			handle.Sync(true)
+		case <-done:
+			return
+		}
+	}
 }
 
 // Sync sends all updates pending for this connection.
@@ -139,6 +161,13 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 	handle.lock.Lock()
 	defer handle.lock.Unlock()
 
+	handle.syncUnlocked(expunge)
+}
+
+func (handle *MailboxHandle) syncUnlocked(expunge bool) {
+	handle.lock.Lock()
+	defer handle.lock.Unlock()
+
 	for _, upd := range handle.pendingFlags {
 		seq, ok := uidToSeq(handle.uidMap, imap.Seq{Start: upd.uid, Stop: upd.uid})
 		if !ok {
@@ -147,7 +176,7 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 		}
 		updMsg := imap.NewMessage(seq.Start, []imap.FetchItem{imap.FetchFlags, imap.FetchUid})
 		updMsg.Flags = upd.newFlags
-		
+
 		updMsg.Uid = upd.uid
 		handle.conn.SendUpdate(&backend.MessageUpdate{
 			Message: updMsg,
@@ -179,7 +208,7 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 			}
 		}
 		handle.pendingCreated.Clear()
-		
+
 		status := imap.NewMailboxStatus("", []imap.StatusItem{imap.StatusMessages})
 		status.Messages = uint32(len(handle.uidMap))
 		handle.conn.SendUpdate(&backend.MailboxUpdate{
@@ -205,6 +234,35 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 	}
 }
 
+func (handle *MailboxHandle) enqueueFlagsUpdate(uid uint32, newFlags []string) {
+	upd := flagsUpdate{
+		uid:      uid,
+		newFlags: newFlags,
+	}
+
+	handle.lock.Lock()
+	if handle.recent.Contains(uid) {
+		upd.newFlags = make([]string, len(newFlags))
+		copy(upd.newFlags, newFlags)
+		upd.newFlags = append(upd.newFlags, imap.RecentFlag)
+	}
+
+	exists := false
+	for i, upd := range handle.pendingFlags {
+		if upd.uid == uid {
+			handle.pendingFlags[i].newFlags = upd.newFlags
+			exists = true
+			break
+		}
+	}
+	if !exists {
+		handle.pendingFlags = append(handle.pendingFlags, upd)
+	}
+
+	handle.idleUpdate()
+	handle.lock.Unlock()
+}
+
 // FlagsChanged performans all necessary update dispatching
 // actions on flags change.
 //
@@ -219,30 +277,7 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 			continue
 		}
 
-		upd := flagsUpdate{
-			uid:      uid,
-			newFlags: newFlags,
-		}
-
-		hndl.lock.Lock()
-		if handle.recent.Contains(uid) {
-			upd.newFlags = make([]string, len(newFlags))
-			copy(upd.newFlags, newFlags)
-			upd.newFlags = append(upd.newFlags, imap.RecentFlag)
-		}
-		
-		exists := false
-		for i, upd := range hndl.pendingFlags {
-			if upd.uid == uid {
-				hndl.pendingFlags[i].newFlags = upd.newFlags
-				exists = true
-				break
-			}
-		}
-		if !exists {
-			hndl.pendingFlags = append(hndl.pendingFlags, upd)
-		}
-		hndl.lock.Unlock()
+		hndl.enqueueFlagsUpdate(uid, newFlags)
 	}
 }
 
@@ -254,6 +289,15 @@ func (handle *MailboxHandle) IsRecent(uid uint32) bool {
 	return handle.recent.Contains(uid)
 }
 
+func (handle *MailboxHandle) idleUpdate() {
+	if handle.idleerNotify != nil {
+		select {
+		case handle.idleerNotify <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Removed performs all necessary update dispatching actions
 // for a specified removed message.
 func (handle *MailboxHandle) Removed(uid uint32) {
@@ -263,6 +307,7 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 	for hndl := range handle.shared.handles {
 		hndl.lock.Lock()
 		hndl.pendingExpunge.AddNum(uid)
+		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 }
@@ -274,6 +319,7 @@ func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
 	for hndl := range handle.shared.handles {
 		hndl.lock.Lock()
 		hndl.pendingExpunge.AddSet(&seq)
+		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 }
