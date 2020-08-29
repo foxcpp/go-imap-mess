@@ -7,13 +7,13 @@ import (
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
 	"github.com/emersion/go-imap/backend/backendutil"
-	sequpdate "github.com/foxcpp/go-imap-sequpdate"
+	sequpdate "github.com/foxcpp/go-imap-mess"
 )
 
 var Delimiter = "."
 
 type Mailbox struct {
-	Subscribed bool
+	Subscribed   bool
 	MessagesLock sync.RWMutex
 	Messages     []*Message
 
@@ -54,7 +54,7 @@ func (mbox *SelectedMailbox) Conn() backend.Conn {
 func (mbox *Mailbox) flags() []string {
 	mbox.MessagesLock.RLock()
 	defer mbox.MessagesLock.RUnlock()
-	
+
 	flagsMap := make(map[string]bool)
 	for _, msg := range mbox.Messages {
 		for _, f := range msg.Flags {
@@ -120,7 +120,7 @@ func (mbox *SelectedMailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items [
 
 	defer mbox.handle.Sync(false)
 	defer close(ch)
-	
+
 	seqSet, err := mbox.handle.ResolveSeq(uid, seqSet)
 	if err != nil {
 		if uid {
@@ -133,12 +133,12 @@ func (mbox *SelectedMailbox) ListMessages(uid bool, seqSet *imap.SeqSet, items [
 		if !seqSet.Contains(msg.Uid) {
 			continue
 		}
-		
+
 		seq, ok := mbox.handle.UidAsSeq(msg.Uid)
 		if !ok {
 			continue
 		}
-		
+
 		if shouldSetSeen {
 			hasSeen := false
 			for _, f := range msg.Flags {
@@ -168,7 +168,7 @@ func (mbox *SelectedMailbox) SearchMessages(uid bool, criteria *imap.SearchCrite
 	defer mbox.MessagesLock.RUnlock()
 
 	mbox.handle.ResolveCriteria(criteria)
-	
+
 	defer mbox.handle.Sync(uid)
 
 	var ids []uint32
@@ -203,10 +203,10 @@ func (mbox *SelectedMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, 
 		newFlags = append(newFlags, f)
 	}
 	flags = newFlags
-	
+
 	mbox.MessagesLock.RLock()
 	defer mbox.MessagesLock.RUnlock()
-	
+
 	defer mbox.handle.Sync(uid)
 
 	seqset, err := mbox.handle.ResolveSeq(uid, seqset)
@@ -216,7 +216,7 @@ func (mbox *SelectedMailbox) UpdateMessagesFlags(uid bool, seqset *imap.SeqSet, 
 		}
 		return err
 	}
-	
+
 	for _, msg := range mbox.Messages {
 		if !seqset.Contains(msg.Uid) {
 			continue
@@ -238,7 +238,7 @@ func (mbox *SelectedMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, destNam
 
 	mbox.MessagesLock.RLock()
 	defer mbox.MessagesLock.RUnlock()
-	
+
 	defer mbox.handle.Sync(true)
 
 	dest.MessagesLock.Lock()
@@ -251,7 +251,7 @@ func (mbox *SelectedMailbox) CopyMessages(uid bool, seqset *imap.SeqSet, destNam
 		}
 		return err
 	}
-	
+
 	for _, msg := range mbox.Messages {
 		if !seqset.Contains(msg.Uid) {
 			continue
@@ -290,7 +290,7 @@ func (mbox *SelectedMailbox) Expunge() error {
 			mbox.handle.Removed(msg.Uid)
 		}
 	}
-	
+
 	mbox.handle.Sync(true)
 
 	return nil

@@ -7,7 +7,7 @@ import (
 	"os/signal"
 
 	"github.com/emersion/go-imap/server"
-	"github.com/foxcpp/go-imap-sequpdate/memory"
+	"github.com/foxcpp/go-imap-mess/memory"
 )
 
 func main() {
@@ -41,4 +41,3 @@ func main() {
 
 	<-sig
 }
-

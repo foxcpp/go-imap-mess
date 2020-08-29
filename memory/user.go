@@ -10,14 +10,14 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
-	sequpdate "github.com/foxcpp/go-imap-sequpdate"
+	sequpdate "github.com/foxcpp/go-imap-mess"
 )
 
 type User struct {
 	username  string
 	password  string
 	mailboxes map[string]*Mailbox
-	mngr 	  *sequpdate.Manager
+	mngr      *sequpdate.Manager
 }
 
 func (u *User) Username() string {
@@ -52,9 +52,9 @@ func (u *User) GetMailbox(name string, readOnly bool, conn backend.Conn) (*imap.
 	if err != nil {
 		return nil, nil, err
 	}
-	
+
 	var (
-		uids []uint32
+		uids   []uint32
 		recent imap.SeqSet
 	)
 	mailbox.MessagesLock.Lock()
@@ -66,13 +66,13 @@ func (u *User) GetMailbox(name string, readOnly bool, conn backend.Conn) (*imap.
 		}
 	}
 	mailbox.MessagesLock.Unlock()
-	
+
 	selected := &SelectedMailbox{
 		Mailbox:  mailbox,
 		conn:     conn,
 		readOnly: readOnly,
 	}
-	
+
 	handle, err := u.mngr.Mailbox(u.username+"\x00"+name, selected, uids, &recent)
 	if err != nil {
 		return nil, nil, err
@@ -154,7 +154,7 @@ func (u *User) CreateMessage(mboxName string, flags []string, date time.Time, bo
 
 	mbox.MessagesLock.Lock()
 	defer mbox.MessagesLock.Unlock()
-	
+
 	msg := &Message{
 		Uid:   mbox.uidNext(),
 		Date:  date,
@@ -163,7 +163,7 @@ func (u *User) CreateMessage(mboxName string, flags []string, date time.Time, bo
 		Body:  b,
 	}
 	mbox.Messages = append(mbox.Messages, msg)
-	
+
 	if u.mngr.NewMessage(u.username+"\x00"+mboxName, msg.Uid) {
 		msg.Recent = true
 	}
@@ -183,8 +183,8 @@ func (u *User) CreateMailbox(name string) error {
 		_, exists := u.mailboxes[mboxName]
 		if !exists {
 			u.mailboxes[mboxName] = &Mailbox{
-				name: mboxName, 
-				user: u,
+				name:        mboxName,
+				user:        u,
 				uidValidity: uint32(rand.Int31()),
 			}
 		}
@@ -192,7 +192,7 @@ func (u *User) CreateMailbox(name string) error {
 			mboxName += Delimiter
 		}
 	}
-	
+
 	return nil
 }
 
@@ -205,9 +205,9 @@ func (u *User) DeleteMailbox(name string) error {
 	}
 
 	delete(u.mailboxes, name)
-	
-	u.mngr.MailboxDestroyed(u.username+"\x00"+name)
-	
+
+	u.mngr.MailboxDestroyed(u.username + "\x00" + name)
+
 	return nil
 }
 
@@ -216,7 +216,7 @@ func (u *User) RenameMailbox(existingName, newName string) error {
 	if !ok {
 		return backend.ErrNoSuchMailbox
 	}
-	
+
 	for _, mbox := range u.mailboxes {
 		if strings.HasPrefix(mbox.name, existingName) {
 			newNameChild := strings.Replace(mbox.name, existingName, newName, 1)
@@ -225,7 +225,7 @@ func (u *User) RenameMailbox(existingName, newName string) error {
 				Messages: mbox.Messages,
 				user:     u,
 			}
-			u.mngr.MailboxDestroyed(u.username+"\x00"+mbox.name)
+			u.mngr.MailboxDestroyed(u.username + "\x00" + mbox.name)
 		}
 	}
 

@@ -7,11 +7,11 @@ import (
 
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/backend"
-	sequpdate "github.com/foxcpp/go-imap-sequpdate"
+	sequpdate "github.com/foxcpp/go-imap-mess"
 )
 
 type Backend struct {
-	users map[string]*User
+	users   map[string]*User
 	manager *sequpdate.Manager
 }
 
@@ -29,7 +29,7 @@ func New() *Backend {
 	user := &User{
 		username: "username",
 		password: "password",
-		mngr: 	  mngr,
+		mngr:     mngr,
 	}
 
 	body := "From: contact@example.org\r\n" +
@@ -58,7 +58,7 @@ func New() *Backend {
 	}
 
 	return &Backend{
-		users: map[string]*User{user.username: user},
+		users:   map[string]*User{user.username: user},
 		manager: mngr,
 	}
 }
