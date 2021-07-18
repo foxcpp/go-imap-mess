@@ -115,6 +115,7 @@ func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent boo
 			hndl.hasNewRecent = true
 			addedRecent = true
 		}
+		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 	
@@ -151,6 +152,7 @@ func (m *Manager) NewMessage(key interface{}, uid uint32) (storeRecent bool) {
 			hndl.recentCount++
 			addedRecent = true
 		}
+		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 
