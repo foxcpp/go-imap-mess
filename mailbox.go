@@ -2,6 +2,7 @@ package mess
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 
 	"github.com/emersion/go-imap"
@@ -165,9 +166,6 @@ func (handle *MailboxHandle) Sync(expunge bool) {
 }
 
 func (handle *MailboxHandle) syncUnlocked(expunge bool) {
-	handle.lock.Lock()
-	defer handle.lock.Unlock()
-
 	for _, upd := range handle.pendingFlags {
 		seq, ok := uidToSeq(handle.uidMap, imap.Seq{Start: upd.uid, Stop: upd.uid})
 		if !ok {
@@ -269,6 +267,15 @@ func (handle *MailboxHandle) enqueueFlagsUpdate(uid uint32, newFlags []string) {
 // newFlags should not include \Recent, silent should be set
 // if UpdateMessagesFlags was called with it set.
 func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent bool) {
+	if handle.m.sink != nil {
+		handle.m.sink <- Update{
+			Type:     UpdFlags,
+			Key:      handle.shared.key,
+			SeqSet:   strconv.FormatUint(uint64(uid), 10),
+			NewFlags: newFlags,
+		}
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -301,6 +308,14 @@ func (handle *MailboxHandle) idleUpdate() {
 // Removed performs all necessary update dispatching actions
 // for a specified removed message.
 func (handle *MailboxHandle) Removed(uid uint32) {
+	if handle.m.sink != nil {
+		handle.m.sink <- Update{
+			Type:     UpdRemoved,
+			Key:      handle.shared.key,
+			SeqSet:   strconv.FormatUint(uint64(uid), 10),
+		}
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -313,6 +328,14 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 }
 
 func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
+	if handle.m.sink != nil {
+		handle.m.sink <- Update{
+			Type:     UpdRemoved,
+			Key:      handle.shared.key,
+			SeqSet:   seq.String(),
+		}
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -339,6 +362,9 @@ func (handle *MailboxHandle) Close() error {
 
 	if len(handle.shared.handles) == 0 {
 		delete(handle.m.handles, handle.shared.key)
+		if handle.m.ExternalUnsubscribe != nil {
+			handle.m.ExternalUnsubscribe(handle.shared.key)
+		}
 	}
 
 	return nil

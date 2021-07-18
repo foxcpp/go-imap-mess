@@ -14,6 +14,8 @@ github.com/emersion/go-textwrapper v0.0.0-20160606182133-d0e65e56babe h1:40SWqY0
 github.com/emersion/go-textwrapper v0.0.0-20160606182133-d0e65e56babe/go.mod h1:aqO8z8wPrjkscevZJFVE1wXJrLpC5LtJG7fqLOsPb2U=
 github.com/foxcpp/go-imap v1.0.0-beta.1.0.20200802083659-cf943ff91d80 h1:c66xbEXsb/aPZTSrf430FhPGhE3s6wJtCE8BszYOsdY=
 github.com/foxcpp/go-imap v1.0.0-beta.1.0.20200802083659-cf943ff91d80/go.mod h1:yKASt+C3ZiDAiCSssxg9caIckWF/JG7ZQTO7GAmvicU=
+github.com/foxcpp/go-imap-backend-tests v0.0.0-20200617132817-958ea5829771 h1:xemWCEhBz86Y8v5YgRBnqf6PdZg+ilVgn2jxWVoLOGo=
+github.com/foxcpp/go-imap-backend-tests v0.0.0-20200617132817-958ea5829771/go.mod h1:yUISYv/uXLQ6tQZcds/p/hdcZ5JzrEUifyED2VffWpc=
 github.com/google/go-cmp v0.2.0 h1:+dTQ8DZQJz0Mb/HjFlkptS1FeQ4cWSnN941F8aEG4SQ=
 github.com/google/go-cmp v0.2.0/go.mod h1:oXzfMopK8JAjlY9xF4vHSVASa0yLyX7SntLO5aqRK0M=
 github.com/martinlindhe/base36 v0.0.0-20190418230009-7c6542dfbb41/go.mod h1:+AtEs8xrBpCeYgSLoY/aJ6Wf37jtBuR0s35750M27+8=
