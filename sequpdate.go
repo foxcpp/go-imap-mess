@@ -57,6 +57,11 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 		recent:       recents,
 		pendingFlags: make([]flagsUpdate, 0, 1),
 	}
+	for _, set := range recents.Set {
+		for i := set.Start; i <= set.Stop; i++ {
+			handle.recentCount++
+		}
+	}
 
 	sharedHndl.handlesLock.Lock()
 	sharedHndl.handles[handle] = struct{}{}
