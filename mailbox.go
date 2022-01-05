@@ -220,11 +220,9 @@ func (handle *MailboxHandle) syncUnlocked(expunge bool) {
 		// and I believe it may indeed cause trouble for some clients
 		// so we work-around it by sending multiple separate update objects.
 		if handle.hasNewRecent {
-			status.Items = map[imap.StatusItem]interface{}{
-				imap.StatusRecent: nil,
-			}
+			status := imap.NewMailboxStatus("", []imap.StatusItem{imap.StatusRecent})
 			status.Recent = handle.recentCount
-			handle.hasNewRecent = true
+			handle.hasNewRecent = false
 			handle.conn.SendUpdate(&backend.MailboxUpdate{
 				MailboxStatus: status,
 			})
