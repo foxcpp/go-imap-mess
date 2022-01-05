@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -39,6 +40,17 @@ func (mbox *Mailbox) Info() (*imap.MailboxInfo, error) {
 	info := &imap.MailboxInfo{
 		Delimiter: Delimiter,
 		Name:      mbox.name,
+	}
+	hasChildren := false
+	for _, oMbox := range mbox.user.mailboxes {
+		if strings.HasPrefix(oMbox.name, mbox.name+".") {
+			hasChildren = true
+		}
+	}
+	if hasChildren {
+		info.Attributes = append(info.Attributes, imap.HasChildrenAttr)
+	} else {
+		info.Attributes = append(info.Attributes, imap.HasNoChildrenAttr)
 	}
 	return info, nil
 }
