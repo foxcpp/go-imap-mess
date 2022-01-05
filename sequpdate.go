@@ -8,19 +8,19 @@ import (
 	"github.com/emersion/go-imap/backend"
 )
 
-type Manager struct{
+type Manager struct {
 	handlesLock sync.RWMutex
-	handles map[interface{}]*sharedHandle
+	handles     map[interface{}]*sharedHandle
 
 	sink chan<- Update
 
-	ExternalSubscribe func(key interface{})
+	ExternalSubscribe   func(key interface{})
 	ExternalUnsubscribe func(key interface{})
 }
 
 func NewManager() *Manager {
 	return &Manager{
-		handles:     make(map[interface{}]*sharedHandle),
+		handles: make(map[interface{}]*sharedHandle),
 	}
 }
 
@@ -44,11 +44,11 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 	sharedHndl, ok := m.handles[key]
 	if sharedHndl == nil {
 		sharedHndl = &sharedHandle{
-			key: key,
+			key:     key,
 			handles: map[*MailboxHandle]struct{}{},
 		}
 	}
-	
+
 	handle := &MailboxHandle{
 		m:            m,
 		shared:       sharedHndl,
@@ -72,7 +72,7 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 			m.ExternalSubscribe(key)
 		}
 	}
-	
+
 	return handle, nil
 }
 
@@ -85,9 +85,9 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 func (m *Manager) NewMessages(key interface{}, uid imap.SeqSet) (storeRecent bool) {
 	if m.sink != nil {
 		m.sink <- Update{
-			Type:     UpdNewMessage,
-			Key:      key,
-			SeqSet:   uid.String(),
+			Type:   UpdNewMessage,
+			Key:    key,
+			SeqSet: uid.String(),
 		}
 	}
 
@@ -97,15 +97,15 @@ func (m *Manager) NewMessages(key interface{}, uid imap.SeqSet) (storeRecent boo
 func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent bool) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
-	
+
 	handle := m.handles[key]
 	if handle == nil {
 		return false
 	}
-	
+
 	handle.handlesLock.RLock()
 	defer handle.handlesLock.RUnlock()
-	
+
 	addedRecent := false
 	for hndl := range handle.handles {
 		hndl.lock.Lock()
@@ -123,16 +123,16 @@ func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent boo
 		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
-	
+
 	return !addedRecent
 }
 
 func (m *Manager) NewMessage(key interface{}, uid uint32) (storeRecent bool) {
 	if m.sink != nil {
 		m.sink <- Update{
-			Type:     UpdNewMessage,
-			Key:      key,
-			SeqSet:   strconv.FormatUint(uint64(uid), 10),
+			Type:   UpdNewMessage,
+			Key:    key,
+			SeqSet: strconv.FormatUint(uint64(uid), 10),
 		}
 	}
 
@@ -177,8 +177,8 @@ func (m *Manager) NewMessage(key interface{}, uid uint32) (storeRecent bool) {
 func (m *Manager) MailboxDestroyed(key interface{}) {
 	if m.sink != nil {
 		m.sink <- Update{
-			Type:     UpdMboxDestroyed,
-			Key:      key,
+			Type: UpdMboxDestroyed,
+			Key:  key,
 		}
 	}
 
@@ -188,16 +188,16 @@ func (m *Manager) MailboxDestroyed(key interface{}) {
 func (m *Manager) mailboxDestroyed(key interface{}) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
-	
+
 	handle := m.handles[key]
 	if handle == nil {
 		return
 	}
-	
+
 	handle.handlesLock.Lock()
 	handle.handles = nil
 	handle.handlesLock.Unlock()
-	
+
 	delete(m.handles, key)
 
 	if m.ExternalUnsubscribe != nil {

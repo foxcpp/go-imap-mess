@@ -9,7 +9,7 @@ import (
 
 var uselessSeq = imap.Seq{
 	Start: math.MaxUint32,
-	Stop: math.MaxUint32,
+	Stop:  math.MaxUint32,
 }
 
 func uidToSeq(uidMap []uint32, seq imap.Seq) (imap.Seq, bool) {

@@ -14,5 +14,5 @@ func initBackend() backendtests.Backend {
 
 func TestBackend(t *testing.T) {
 	rand.Seed(1)
-	backendtests.RunTests(t, initBackend, func (_ backendtests.Backend) {})
+	backendtests.RunTests(t, initBackend, func(_ backendtests.Backend) {})
 }

@@ -80,13 +80,13 @@ func (m *Message) Fetch(seqNum uint32, items []imap.FetchItem, recentFlag bool) 
 
 func (m *Message) Match(seqNum uint32, c *imap.SearchCriteria, recentFlag bool) (bool, error) {
 	e, _ := m.entity()
-	
+
 	flags := m.Flags
 	if recentFlag {
 		flags = make([]string, len(m.Flags), len(m.Flags)+1)
 		copy(flags, m.Flags)
 		flags = append(flags, imap.RecentFlag)
 	}
-	
+
 	return backendutil.Match(e, seqNum, m.Uid, m.Date, flags, c)
 }

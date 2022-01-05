@@ -308,9 +308,9 @@ func (handle *MailboxHandle) idleUpdate() {
 func (handle *MailboxHandle) Removed(uid uint32) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update{
-			Type:     UpdRemoved,
-			Key:      handle.shared.key,
-			SeqSet:   strconv.FormatUint(uint64(uid), 10),
+			Type:   UpdRemoved,
+			Key:    handle.shared.key,
+			SeqSet: strconv.FormatUint(uint64(uid), 10),
 		}
 	}
 
@@ -328,9 +328,9 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update{
-			Type:     UpdRemoved,
-			Key:      handle.shared.key,
-			SeqSet:   seq.String(),
+			Type:   UpdRemoved,
+			Key:    handle.shared.key,
+			SeqSet: seq.String(),
 		}
 	}
 

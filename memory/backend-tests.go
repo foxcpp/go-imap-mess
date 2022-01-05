@@ -16,17 +16,17 @@ func (b *Backend) CreateUser(name string) error {
 	user := &User{
 		username: name,
 		password: "password",
-		mngr: 	  b.manager,
+		mngr:     b.manager,
 	}
 
 	user.mailboxes = map[string]*Mailbox{
 		"INBOX": {
-			name: "INBOX",
-			user: user,
+			name:     "INBOX",
+			user:     user,
 			Messages: nil,
 		},
 	}
-	
+
 	b.users[name] = user
 	return nil
 }

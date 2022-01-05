@@ -15,10 +15,10 @@ const (
 	UpdMboxDestroyed
 )
 
-type Update struct{
-	Type UpdateType
-	Key interface{}
-	SeqSet string `json:",omitempty"`
+type Update struct {
+	Type     UpdateType
+	Key      interface{}
+	SeqSet   string   `json:",omitempty"`
 	NewFlags []string `json:",omitempty"`
 }
 
