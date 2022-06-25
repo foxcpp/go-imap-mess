@@ -159,6 +159,10 @@ func (handle *MailboxHandle) Idle(done <-chan struct{}) {
 // sent. IT SHOULD NOT BE SET WHILE EXECUTING A COMMAND
 // USING SEQUENCE NUMBERS (except for COPY).
 func (handle *MailboxHandle) Sync(expunge bool) {
+	if handle.conn == nil {
+		return
+	}
+
 	handle.lock.Lock()
 	defer handle.lock.Unlock()
 
@@ -274,6 +278,10 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 		}
 	}
 
+	if handle.conn == nil {
+		return
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -314,6 +322,10 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 		}
 	}
 
+	if handle.conn == nil {
+		return
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -334,6 +346,10 @@ func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
 		}
 	}
 
+	if handle.conn == nil {
+		return
+	}
+
 	handle.shared.handlesLock.RLock()
 	defer handle.shared.handlesLock.RUnlock()
 
@@ -350,6 +366,10 @@ func (handle *MailboxHandle) MsgsCount() int {
 }
 
 func (handle *MailboxHandle) Close() error {
+	if handle.conn == nil {
+		return nil
+	}
+
 	handle.m.handlesLock.Lock()
 	defer handle.m.handlesLock.Unlock()
 

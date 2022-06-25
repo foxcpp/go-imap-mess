@@ -29,6 +29,21 @@ type Mailbox interface {
 	Conn() backend.Conn
 }
 
+// ManagementHandle initializes a new message handle for the mailbox that
+// is opened without an active connection, e.g. from an administrative UI or
+// CLI utility.
+//
+// Such handle never sends updates to mbox.Conn(), only to SetExternalSink if
+// set. \Recent flag for new messages will never be shown to such connections
+// and it will receive no updates for mailbox changes anyway (Idle, Sync are no-op).
+func (m *Manager) ManagementHandle(uids []uint32, recents *imap.SeqSet) *MailboxHandle {
+	return &MailboxHandle{
+		m:      m,
+		recent: recents,
+		uidMap: uids,
+	}
+}
+
 // Mailbox initializes a new message handle for the mailbox.
 //
 // key should be a server-global unique identifier for the mailbox.
