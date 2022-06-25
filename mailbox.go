@@ -23,6 +23,7 @@ type sharedHandle struct {
 
 type MailboxHandle struct {
 	m      *Manager
+	key    interface{}
 	shared *sharedHandle
 	conn   backend.Conn
 
@@ -272,7 +273,7 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 	if handle.m.sink != nil {
 		handle.m.sink <- Update{
 			Type:     UpdFlags,
-			Key:      handle.shared.key,
+			Key:      handle.key,
 			SeqSet:   strconv.FormatUint(uint64(uid), 10),
 			NewFlags: newFlags,
 		}
@@ -317,7 +318,7 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update{
 			Type:   UpdRemoved,
-			Key:    handle.shared.key,
+			Key:    handle.key,
 			SeqSet: strconv.FormatUint(uint64(uid), 10),
 		}
 	}
@@ -341,7 +342,7 @@ func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update{
 			Type:   UpdRemoved,
-			Key:    handle.shared.key,
+			Key:    handle.key,
 			SeqSet: seq.String(),
 		}
 	}

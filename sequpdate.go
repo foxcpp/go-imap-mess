@@ -36,9 +36,10 @@ type Mailbox interface {
 // Such handle never sends updates to mbox.Conn(), only to SetExternalSink if
 // set. \Recent flag for new messages will never be shown to such connections
 // and it will receive no updates for mailbox changes anyway (Idle, Sync are no-op).
-func (m *Manager) ManagementHandle(uids []uint32, recents *imap.SeqSet) *MailboxHandle {
+func (m *Manager) ManagementHandle(key interface{}, uids []uint32, recents *imap.SeqSet) *MailboxHandle {
 	return &MailboxHandle{
 		m:      m,
+		key:    key,
 		recent: recents,
 		uidMap: uids,
 	}
@@ -66,6 +67,7 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 
 	handle := &MailboxHandle{
 		m:            m,
+		key:          key,
 		shared:       sharedHndl,
 		conn:         mbox.Conn(),
 		uidMap:       uids,
