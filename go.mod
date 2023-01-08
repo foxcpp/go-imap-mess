@@ -3,7 +3,7 @@ module github.com/foxcpp/go-imap-mess
 go 1.14
 
 require (
-	github.com/emersion/go-imap v1.0.5-0.20200511082158-271ea913b422
+	github.com/emersion/go-imap v1.2.2-0.20220928192137-6fac715be9cf
 	github.com/emersion/go-imap-appendlimit v0.0.0-20190308131241-25671c986a6a // indirect
 	github.com/emersion/go-imap-move v0.0.0-20180601155324-5eb20cb834bf // indirect
 	github.com/emersion/go-message v0.15.0
