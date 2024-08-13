@@ -1,32 +1,25 @@
 package mess
 
 import (
-	"strconv"
 	"sync"
 
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/backend"
+	"github.com/emersion/go-imap/v2"
 )
 
-type Manager struct {
+type Manager[MailboxKey comparable] struct {
 	handlesLock sync.RWMutex
-	handles     map[interface{}]*sharedHandle
+	handles     map[MailboxKey]*sharedHandle[MailboxKey]
 
-	sink chan<- Update
+	sink chan<- Update[MailboxKey]
 
-	ExternalSubscribe   func(key interface{})
-	ExternalUnsubscribe func(key interface{})
+	ExternalSubscribe   func(key MailboxKey)
+	ExternalUnsubscribe func(key MailboxKey)
 }
 
-func NewManager() *Manager {
-	return &Manager{
-		handles: make(map[interface{}]*sharedHandle),
+func NewManager[MailboxKey comparable]() *Manager[MailboxKey] {
+	return &Manager[MailboxKey]{
+		handles: make(map[MailboxKey]*sharedHandle[MailboxKey]),
 	}
-}
-
-type Mailbox interface {
-	backend.Mailbox
-	Conn() backend.Conn
 }
 
 // ManagementHandle initializes a new message handle for the mailbox that
@@ -36,12 +29,13 @@ type Mailbox interface {
 // Such handle never sends updates to mbox.Conn(), only to SetExternalSink if
 // set. \Recent flag for new messages will never be shown to such connections
 // and it will receive no updates for mailbox changes anyway (Idle, Sync are no-op).
-func (m *Manager) ManagementHandle(key interface{}, uids []uint32, recents *imap.SeqSet) *MailboxHandle {
-	return &MailboxHandle{
-		m:      m,
-		key:    key,
-		recent: recents,
-		uidMap: uids,
+func (m *Manager[MailboxKey]) ManagementHandle(key MailboxKey, uids []imap.UID, recents imap.UIDSet) *MailboxHandle[MailboxKey] {
+	return &MailboxHandle[MailboxKey]{
+		m:          m,
+		key:        key,
+		management: true,
+		recent:     recents,
+		uidMap:     uids,
 	}
 }
 
@@ -53,28 +47,27 @@ func (m *Manager) ManagementHandle(key interface{}, uids []uint32, recents *imap
 // recents should contain the list of message UIDs with persistent \Recent flag.
 // Note that persistent \Recent should be unset once passed to Mailbox().
 // In particular, two subsequent calls should not receive the same value.
-func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents *imap.SeqSet) (*MailboxHandle, error) {
+func (m *Manager[MailboxKey]) Mailbox(key MailboxKey, uids []imap.UID, recents imap.UIDSet) (*MailboxHandle[MailboxKey], error) {
 	m.handlesLock.Lock()
 	defer m.handlesLock.Unlock()
 
 	sharedHndl, ok := m.handles[key]
 	if sharedHndl == nil {
-		sharedHndl = &sharedHandle{
+		sharedHndl = &sharedHandle[MailboxKey]{
 			key:     key,
-			handles: map[*MailboxHandle]struct{}{},
+			handles: map[*MailboxHandle[MailboxKey]]struct{}{},
 		}
 	}
 
-	handle := &MailboxHandle{
+	handle := &MailboxHandle[MailboxKey]{
 		m:            m,
 		key:          key,
 		shared:       sharedHndl,
-		conn:         mbox.Conn(),
 		uidMap:       uids,
 		recent:       recents,
 		pendingFlags: make([]flagsUpdate, 0, 1),
 	}
-	for _, set := range recents.Set {
+	for _, set := range recents {
 		for i := set.Start; i <= set.Stop; i++ {
 			handle.recentCount++
 		}
@@ -99,19 +92,19 @@ func (m *Manager) Mailbox(key interface{}, mbox Mailbox, uids []uint32, recents 
 // Return value indicates whether backend should store
 // a persistent \Recent flag in DB for further retrieval
 // (see Mailbox)
-func (m *Manager) NewMessages(key interface{}, uid imap.SeqSet) (storeRecent bool) {
+func (m *Manager[MailboxKey]) NewMessages(key MailboxKey, uid imap.UIDSet) (storeRecent bool) {
 	if m.sink != nil {
-		m.sink <- Update{
+		m.sink <- Update[MailboxKey]{
 			Type:   UpdNewMessage,
 			Key:    key,
-			SeqSet: uid.String(),
+			SeqSet: uid,
 		}
 	}
 
 	return m.newMessages(key, uid)
 }
 
-func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent bool) {
+func (m *Manager[MailboxKey]) newMessages(key MailboxKey, uid imap.UIDSet) (storeRecent bool) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
 
@@ -126,10 +119,10 @@ func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent boo
 	addedRecent := false
 	for hndl := range handle.handles {
 		hndl.lock.Lock()
-		hndl.pendingCreated.AddSet(&uid)
+		hndl.pendingCreated.AddSet(uid)
 		if !addedRecent {
-			hndl.recent.AddSet(&uid)
-			for _, set := range uid.Set {
+			hndl.recent.AddSet(uid)
+			for _, set := range uid {
 				for i := set.Start; i <= set.Stop; i++ {
 					hndl.recentCount++
 				}
@@ -144,12 +137,12 @@ func (m *Manager) newMessages(key interface{}, uid imap.SeqSet) (storeRecent boo
 	return !addedRecent
 }
 
-func (m *Manager) NewMessage(key interface{}, uid uint32) (storeRecent bool) {
+func (m *Manager[MailboxKey]) NewMessage(key MailboxKey, uid imap.UID) (storeRecent bool) {
 	if m.sink != nil {
-		m.sink <- Update{
+		m.sink <- Update[MailboxKey]{
 			Type:   UpdNewMessage,
 			Key:    key,
-			SeqSet: strconv.FormatUint(uint64(uid), 10),
+			SeqSet: imap.UIDSetNum(uid),
 		}
 	}
 
@@ -191,9 +184,9 @@ func (m *Manager) NewMessage(key interface{}, uid uint32) (storeRecent bool) {
 //
 // In all cases it is better to call MailboxDestroyed _after_
 // physically deleting the mailbox.
-func (m *Manager) MailboxDestroyed(key interface{}) {
+func (m *Manager[MailboxKey]) MailboxDestroyed(key MailboxKey) {
 	if m.sink != nil {
-		m.sink <- Update{
+		m.sink <- Update[MailboxKey]{
 			Type: UpdMboxDestroyed,
 			Key:  key,
 		}
@@ -202,7 +195,7 @@ func (m *Manager) MailboxDestroyed(key interface{}) {
 	m.mailboxDestroyed(key)
 }
 
-func (m *Manager) mailboxDestroyed(key interface{}) {
+func (m *Manager[MailboxKey]) mailboxDestroyed(key MailboxKey) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
 
@@ -222,7 +215,7 @@ func (m *Manager) mailboxDestroyed(key interface{}) {
 	}
 }
 
-func (m *Manager) removedSet(key interface{}, seq imap.SeqSet) {
+func (m *Manager[MailboxKey]) removedSet(key MailboxKey, seq imap.UIDSet) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
 
@@ -236,13 +229,13 @@ func (m *Manager) removedSet(key interface{}, seq imap.SeqSet) {
 
 	for hndl := range handle.handles {
 		hndl.lock.Lock()
-		hndl.pendingExpunge.AddSet(&seq)
+		hndl.pendingExpunge.AddSet(seq)
 		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 }
 
-func (m *Manager) flagsChanged(key interface{}, uid uint32, newFlags []string) {
+func (m *Manager[MailboxKey]) flagsChanged(key MailboxKey, uid imap.UID, newFlags []imap.Flag) {
 	m.handlesLock.RLock()
 	defer m.handlesLock.RUnlock()
 

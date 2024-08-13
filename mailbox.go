@@ -2,43 +2,76 @@ package mess
 
 import (
 	"errors"
-	"strconv"
 	"sync"
 
-	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/backend"
+	"github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapserver"
 )
 
 type flagsUpdate struct {
-	uid      uint32
-	newFlags []string
+	uid      imap.UID
+	newFlags []imap.Flag
 }
 
-type sharedHandle struct {
-	key interface{}
+type sharedHandle[MailboxKey comparable] struct {
+	key MailboxKey
 
 	handlesLock sync.RWMutex
-	handles     map[*MailboxHandle]struct{}
+	handles     map[*MailboxHandle[MailboxKey]]struct{}
 }
 
-type MailboxHandle struct {
-	m      *Manager
-	key    interface{}
-	shared *sharedHandle
-	conn   backend.Conn
+type MailboxHandle[MailboxKey comparable] struct {
+	m          *Manager[MailboxKey]
+	key        MailboxKey
+	shared     *sharedHandle[MailboxKey]
+	management bool
 
 	lock           sync.RWMutex
 	idleerNotify   chan struct{}
-	uidMap         []uint32
-	recent         *imap.SeqSet
+	uidMap         []imap.UID
+	recent         imap.UIDSet
 	hasNewRecent   bool
 	recentCount    uint32
-	pendingExpunge imap.SeqSet
-	pendingCreated imap.SeqSet
+	pendingExpunge imap.UIDSet
+	pendingCreated imap.UIDSet
 	pendingFlags   []flagsUpdate
 }
 
 var ErrNoMessages = errors.New("No messages matched")
+
+func (handle *MailboxHandle[MailboxKey]) ResolveUID(set imap.UIDSet) (imap.UIDSet, error) {
+	handle.lock.RLock()
+	defer handle.lock.RUnlock()
+
+	if len(handle.uidMap) == 0 {
+		return imap.UIDSet{}, ErrNoMessages
+	}
+
+	for i, seq := range set {
+		if seq.Start == 0 {
+			seq.Start = handle.uidMap[len(handle.uidMap)-1]
+		}
+		if seq.Stop == 0 {
+			seq.Stop = handle.uidMap[len(handle.uidMap)-1]
+		}
+
+		// Resolving certain UID sets may yield cases in which
+		// start value is bigger than stop. However, as opposed to
+		// seqnum sets, this is a valid and meaningful set
+		// that may be passed to backend as go-imap cannot sort it
+		// meaningfully.
+		//
+		// E.g. UIDNEXT:*  should be basically equivalent to *
+		// and refer to the last message.
+		if seq.Start > seq.Stop {
+			seq.Start, seq.Stop = seq.Stop, seq.Start
+		}
+
+		set[i] = seq
+	}
+
+	return set, nil
+}
 
 // ResolveSeq converts the passed UIDs or sequence numbers set into UIDs set
 // that is appropriate for mailbox operations in this connection.
@@ -47,43 +80,16 @@ var ErrNoMessages = errors.New("No messages matched")
 // returned.
 // Resulting set *may* include UIDs that were expunged in other
 // connections, backend should ignore these as specified in RFC 3501.
-func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSet, error) {
+func (handle *MailboxHandle[MailboxKey]) ResolveSeq(set imap.SeqSet) (imap.UIDSet, error) {
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
 
 	if len(handle.uidMap) == 0 {
-		return &imap.SeqSet{}, ErrNoMessages
+		return imap.UIDSet{}, ErrNoMessages
 	}
 
-	if uid {
-		for i, seq := range set.Set {
-			if seq.Start == 0 {
-				seq.Start = handle.uidMap[len(handle.uidMap)-1]
-			}
-			if seq.Stop == 0 {
-				seq.Stop = handle.uidMap[len(handle.uidMap)-1]
-			}
-
-			// Resolving certain UID sets may yield cases in which
-			// start value is bigger than stop. However, as opposed to
-			// seqnum sets, this is a valid and meaningful set
-			// that may be passed to backend as go-imap cannot sort it
-			// meaningfully.
-			//
-			// E.g. UIDNEXT:*  should be basically equivalent to *
-			// and refer to the last message.
-			if seq.Start > seq.Stop {
-				seq.Start, seq.Stop = seq.Stop, seq.Start
-			}
-
-			set.Set[i] = seq
-		}
-
-		return set, nil
-	}
-
-	result := &imap.SeqSet{}
-	for _, seq := range set.Set {
+	result := imap.UIDSet{}
+	for _, seq := range set {
 		seq, ok := seqToUid(handle.uidMap, seq)
 		if !ok {
 			continue
@@ -91,8 +97,8 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 		result.AddRange(seq.Start, seq.Stop)
 	}
 
-	if len(result.Set) == 0 {
-		return &imap.SeqSet{}, ErrNoMessages
+	if len(result) == 0 {
+		return imap.UIDSet{}, ErrNoMessages
 	}
 
 	return result, nil
@@ -100,38 +106,39 @@ func (handle *MailboxHandle) ResolveSeq(uid bool, set *imap.SeqSet) (*imap.SeqSe
 
 // ResolveCriteria converts all SeqNum rules into corresponding Uid
 // rules. Argument is modified directly.
-func (handle *MailboxHandle) ResolveCriteria(criteria *imap.SearchCriteria) {
-	if criteria.Uid != nil {
-		seq, _ := handle.ResolveSeq(true, criteria.Uid)
-		criteria.Uid = seq
+func (handle *MailboxHandle[MailboxKey]) ResolveCriteria(criteria *imap.SearchCriteria) {
+	if criteria.UID != nil {
+		for i, set := range criteria.UID {
+			resolved, _ := handle.ResolveUID(set)
+			criteria.UID[i] = resolved
+		}
 	}
 	if criteria.SeqNum != nil {
-		if criteria.Uid == nil {
-			criteria.Uid = new(imap.SeqSet)
+		for _, set := range criteria.SeqNum {
+			set, _ := handle.ResolveSeq(set)
+			criteria.UID = append(criteria.UID, set)
 		}
-		seq, _ := handle.ResolveSeq(false, criteria.SeqNum)
-		criteria.Uid.AddSet(seq)
 		criteria.SeqNum = nil
 	}
 
 	for _, not := range criteria.Not {
-		handle.ResolveCriteria(not)
+		handle.ResolveCriteria(&not)
 	}
 	for _, or := range criteria.Or {
-		handle.ResolveCriteria(or[0])
-		handle.ResolveCriteria(or[1])
+		handle.ResolveCriteria(&or[0])
+		handle.ResolveCriteria(&or[1])
 	}
 }
 
-func (handle *MailboxHandle) UidAsSeq(uid uint32) (uint32, bool) {
+func (handle *MailboxHandle[MailboxKey]) UidAsSeq(uid imap.UID) (uint32, bool) {
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
 
-	seq, ok := uidToSeq(handle.uidMap, imap.Seq{Start: uid, Stop: uid})
+	seq, ok := uidToSeq(handle.uidMap, imap.UIDRange{Start: uid, Stop: uid})
 	return seq.Start, ok
 }
 
-func (handle *MailboxHandle) Idle(done <-chan struct{}) {
+func (handle *MailboxHandle[MailboxKey]) Idle(to *imapserver.UpdateWriter, done <-chan struct{}) error {
 	handle.lock.Lock()
 	handle.idleerNotify = make(chan struct{}, 1)
 	handle.lock.Unlock()
@@ -145,9 +152,11 @@ func (handle *MailboxHandle) Idle(done <-chan struct{}) {
 	for {
 		select {
 		case <-handle.idleerNotify:
-			handle.Sync(true)
+			if err := handle.Sync(to, true); err != nil {
+				return err
+			}
 		case <-done:
-			return
+			return nil
 		}
 	}
 }
@@ -159,35 +168,32 @@ func (handle *MailboxHandle) Idle(done <-chan struct{}) {
 // expunge should be set to true if EXPUNGE updates should be
 // sent. IT SHOULD NOT BE SET WHILE EXECUTING A COMMAND
 // USING SEQUENCE NUMBERS (except for COPY).
-func (handle *MailboxHandle) Sync(expunge bool) {
-	if handle.conn == nil {
-		return
+func (handle *MailboxHandle[MailboxKey]) Sync(to *imapserver.UpdateWriter, expunge bool) error {
+	if handle.management {
+		return nil
 	}
 
 	handle.lock.Lock()
 	defer handle.lock.Unlock()
 
-	handle.syncUnlocked(expunge)
+	return handle.syncUnlocked(to, expunge)
 }
 
-func (handle *MailboxHandle) syncUnlocked(expunge bool) {
+func (handle *MailboxHandle[MailboxKey]) syncUnlocked(to *imapserver.UpdateWriter, expunge bool) error {
 	for _, upd := range handle.pendingFlags {
-		seq, ok := uidToSeq(handle.uidMap, imap.Seq{Start: upd.uid, Stop: upd.uid})
+		seq, ok := uidToSeq(handle.uidMap, imap.UIDRange{Start: upd.uid, Stop: upd.uid})
 		if !ok {
 			// Likely the corresponding message was expunged.
 			continue
 		}
-		updMsg := imap.NewMessage(seq.Start, []imap.FetchItem{imap.FetchFlags, imap.FetchUid})
-		updMsg.Flags = upd.newFlags
 
-		updMsg.Uid = upd.uid
-		handle.conn.SendUpdate(&backend.MessageUpdate{
-			Message: updMsg,
-		})
+		if err := to.WriteMessageFlags(seq.Start, upd.uid, upd.newFlags); err != nil {
+			return err
+		}
 	}
 	handle.pendingFlags = make([]flagsUpdate, 0, 1)
 
-	if expunge && !handle.pendingExpunge.Empty() {
+	if expunge && len(handle.pendingExpunge) > 0 {
 		expunged := make([]uint32, 0, 16)
 		newMap := handle.uidMap[:0] /* SliceTricks: filtering without allocations */
 		for i, uid := range handle.uidMap {
@@ -200,42 +206,41 @@ func (handle *MailboxHandle) syncUnlocked(expunge bool) {
 		handle.uidMap = newMap
 
 		for i := len(expunged) - 1; i >= 0; i-- {
-			handle.conn.SendUpdate(&backend.ExpungeUpdate{SeqNum: expunged[i]})
+			if err := to.WriteExpunge(expunged[i]); err != nil {
+				return err
+			}
 		}
 	}
 
-	if !handle.pendingCreated.Empty() {
-		for _, seq := range handle.pendingCreated.Set {
+	if len(handle.pendingCreated) > 0 {
+		for _, seq := range handle.pendingCreated {
 			for i := seq.Start; i <= seq.Stop; i++ {
 				handle.uidMap = append(handle.uidMap, i)
 			}
 		}
-		handle.pendingCreated.Clear()
 
-		status := imap.NewMailboxStatus("", []imap.StatusItem{imap.StatusMessages})
-		status.Messages = uint32(len(handle.uidMap))
-		handle.conn.SendUpdate(&backend.MailboxUpdate{
-			MailboxStatus: status,
-		})
+		if err := to.WriteNumMessages(uint32(len(handle.uidMap))); err != nil {
+			return err
+		}
+		handle.pendingCreated = handle.pendingCreated[:0]
 
 		// Order in which go-imap sends separate MailboxUpdate elements
 		// is non-deterministic and depend son Items map order.
 		//
 		// However, imaptest wants to have RECENT always after EXISTS
-		// and I believe it may indeed cause trouble for some clients
-		// so we work-around it by sending multiple separate update objects.
+		// and I believe it may indeed cause trouble for some clients,
+		// so we work around it by sending multiple separate update objects.
 		if handle.hasNewRecent {
-			status := imap.NewMailboxStatus("", []imap.StatusItem{imap.StatusRecent})
-			status.Recent = handle.recentCount
+			// XXX: go-imap v2 lacks support for RECENT update
+			// to.WriteNumRecent(handle.recentCount)
 			handle.hasNewRecent = false
-			handle.conn.SendUpdate(&backend.MailboxUpdate{
-				MailboxStatus: status,
-			})
 		}
 	}
+
+	return nil
 }
 
-func (handle *MailboxHandle) enqueueFlagsUpdate(uid uint32, newFlags []string) {
+func (handle *MailboxHandle[MailboxKey]) enqueueFlagsUpdate(uid imap.UID, newFlags []imap.Flag) {
 	upd := flagsUpdate{
 		uid:      uid,
 		newFlags: newFlags,
@@ -243,9 +248,9 @@ func (handle *MailboxHandle) enqueueFlagsUpdate(uid uint32, newFlags []string) {
 
 	handle.lock.Lock()
 	if handle.recent.Contains(uid) {
-		upd.newFlags = make([]string, len(newFlags))
+		upd.newFlags = make([]imap.Flag, len(newFlags))
 		copy(upd.newFlags, newFlags)
-		upd.newFlags = append(upd.newFlags, imap.RecentFlag)
+		upd.newFlags = append(upd.newFlags, `\Recent`)
 	}
 
 	exists := false
@@ -264,22 +269,22 @@ func (handle *MailboxHandle) enqueueFlagsUpdate(uid uint32, newFlags []string) {
 	handle.lock.Unlock()
 }
 
-// FlagsChanged performans all necessary update dispatching
+// FlagsChanged performs all necessary update dispatching
 // actions on flags change.
 //
 // newFlags should not include \Recent, silent should be set
 // if UpdateMessagesFlags was called with it set.
-func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent bool) {
+func (handle *MailboxHandle[MailboxKey]) FlagsChanged(uid imap.UID, newFlags []imap.Flag, silent bool) {
 	if handle.m.sink != nil {
-		handle.m.sink <- Update{
+		handle.m.sink <- Update[MailboxKey]{
 			Type:     UpdFlags,
 			Key:      handle.key,
-			SeqSet:   strconv.FormatUint(uint64(uid), 10),
+			SeqSet:   imap.UIDSetNum(uid),
 			NewFlags: newFlags,
 		}
 	}
 
-	if handle.conn == nil {
+	if handle.management {
 		return
 	}
 
@@ -297,13 +302,13 @@ func (handle *MailboxHandle) FlagsChanged(uid uint32, newFlags []string, silent 
 
 // IsRecent indicates whether the message should be considered
 // to have \Recent flag for this connection.
-func (handle *MailboxHandle) IsRecent(uid uint32) bool {
+func (handle *MailboxHandle[MailboxKey]) IsRecent(uid imap.UID) bool {
 	handle.lock.RLock()
 	defer handle.lock.RUnlock()
 	return handle.recent.Contains(uid)
 }
 
-func (handle *MailboxHandle) idleUpdate() {
+func (handle *MailboxHandle[MailboxKey]) idleUpdate() {
 	if handle.idleerNotify != nil {
 		select {
 		case handle.idleerNotify <- struct{}{}:
@@ -314,16 +319,16 @@ func (handle *MailboxHandle) idleUpdate() {
 
 // Removed performs all necessary update dispatching actions
 // for a specified removed message.
-func (handle *MailboxHandle) Removed(uid uint32) {
+func (handle *MailboxHandle[MailboxKey]) Removed(uid imap.UID) {
 	if handle.m.sink != nil {
-		handle.m.sink <- Update{
+		handle.m.sink <- Update[MailboxKey]{
 			Type:   UpdRemoved,
 			Key:    handle.key,
-			SeqSet: strconv.FormatUint(uint64(uid), 10),
+			SeqSet: imap.UIDSetNum(uid),
 		}
 	}
 
-	if handle.conn == nil {
+	if handle.management {
 		return
 	}
 
@@ -338,16 +343,16 @@ func (handle *MailboxHandle) Removed(uid uint32) {
 	}
 }
 
-func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
+func (handle *MailboxHandle[MailboxKey]) RemovedSet(seq imap.UIDSet) {
 	if handle.m.sink != nil {
-		handle.m.sink <- Update{
+		handle.m.sink <- Update[MailboxKey]{
 			Type:   UpdRemoved,
 			Key:    handle.key,
-			SeqSet: seq.String(),
+			SeqSet: seq,
 		}
 	}
 
-	if handle.conn == nil {
+	if handle.management {
 		return
 	}
 
@@ -356,18 +361,18 @@ func (handle *MailboxHandle) RemovedSet(seq imap.SeqSet) {
 
 	for hndl := range handle.shared.handles {
 		hndl.lock.Lock()
-		hndl.pendingExpunge.AddSet(&seq)
+		hndl.pendingExpunge.AddSet(seq)
 		hndl.idleUpdate()
 		hndl.lock.Unlock()
 	}
 }
 
-func (handle *MailboxHandle) MsgsCount() int {
+func (handle *MailboxHandle[MailboxKey]) MsgsCount() int {
 	return len(handle.uidMap)
 }
 
-func (handle *MailboxHandle) Close() error {
-	if handle.conn == nil {
+func (handle *MailboxHandle[MailboxKey]) Close() error {
+	if handle.management {
 		return nil
 	}
 

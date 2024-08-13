@@ -1,9 +1,7 @@
 package mess
 
 import (
-	"strconv"
-
-	"github.com/emersion/go-imap"
+	"github.com/emersion/go-imap/v2"
 )
 
 type UpdateType int
@@ -15,23 +13,18 @@ const (
 	UpdMboxDestroyed
 )
 
-type Update struct {
+type Update[MailboxKey comparable] struct {
 	Type     UpdateType
-	Key      interface{}
-	SeqSet   string   `json:",omitempty"`
-	NewFlags []string `json:",omitempty"`
+	Key      MailboxKey
+	SeqSet   imap.UIDSet `json:",omitempty"`
+	NewFlags []imap.Flag `json:",omitempty"`
 }
 
 // ExternalUpdate deserializes externally received update and dispatches
 // it internal.
-func (m *Manager) ExternalUpdate(upd Update) {
+func (m *Manager[MailboxKey]) ExternalUpdate(upd Update[MailboxKey]) {
 	switch upd.Type {
 	case UpdNewMessage:
-		seq, err := imap.ParseSeqSet(upd.SeqSet)
-		if err != nil {
-			return
-		}
-
 		// We push back the responsibility of storing \Recent flag
 		// to the Manager object that generated the update in the first
 		// place (we assume it was generated using SetExternalSink).
@@ -39,21 +32,16 @@ func (m *Manager) ExternalUpdate(upd Update) {
 		// Such Manager will either assign \Recent to one of its local
 		// connections or return storeRecent so backend object using this
 		// Manager will save the flag.
-		m.newMessages(upd.Key, *seq)
+		m.newMessages(upd.Key, upd.SeqSet)
 	case UpdFlags:
-		uid, err := strconv.ParseUint(upd.SeqSet, 10, 32)
-		if err != nil {
+		if len(upd.SeqSet) != 1 {
 			return
 		}
+		uid := upd.SeqSet[0].Start
 
-		m.flagsChanged(upd.Key, uint32(uid), upd.NewFlags)
+		m.flagsChanged(upd.Key, uid, upd.NewFlags)
 	case UpdRemoved:
-		seq, err := imap.ParseSeqSet(upd.SeqSet)
-		if err != nil {
-			return
-		}
-
-		m.removedSet(upd.Key, *seq)
+		m.removedSet(upd.Key, upd.SeqSet)
 	case UpdMboxDestroyed:
 		m.mailboxDestroyed(upd.Key)
 	}
@@ -67,6 +55,6 @@ func (m *Manager) ExternalUpdate(upd Update) {
 //
 // It is not safe to call SetExternalSink concurrently
 // with other operations.
-func (m *Manager) SetExternalSink(upds chan<- Update) {
+func (m *Manager[MailboxKey]) SetExternalSink(upds chan<- Update[MailboxKey]) {
 	m.sink = upds
 }
