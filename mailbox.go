@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/emersion/go-imap/v2"
-	"github.com/emersion/go-imap/v2/imapserver"
 )
 
 type flagsUpdate struct {
@@ -138,7 +137,18 @@ func (handle *MailboxHandle[MailboxKey]) UidAsSeq(uid imap.UID) (uint32, bool) {
 	return seq.Start, ok
 }
 
-func (handle *MailboxHandle[MailboxKey]) Idle(to *imapserver.UpdateWriter, done <-chan struct{}) error {
+type ExpungeWriter interface {
+	WriteExpunge(seqNum uint32) error
+}
+
+type UpdateWriter interface {
+	ExpungeWriter
+	WriteNumMessages(n uint32) error
+	WriteMailboxFlags(flags []imap.Flag) error
+	WriteMessageFlags(seqNum uint32, uid imap.UID, flags []imap.Flag) error
+}
+
+func (handle *MailboxHandle[MailboxKey]) Idle(to UpdateWriter, done <-chan struct{}) error {
 	handle.lock.Lock()
 	handle.idleerNotify = make(chan struct{}, 1)
 	handle.lock.Unlock()
@@ -168,7 +178,7 @@ func (handle *MailboxHandle[MailboxKey]) Idle(to *imapserver.UpdateWriter, done 
 // expunge should be set to true if EXPUNGE updates should be
 // sent. IT SHOULD NOT BE SET WHILE EXECUTING A COMMAND
 // USING SEQUENCE NUMBERS (except for COPY).
-func (handle *MailboxHandle[MailboxKey]) Sync(to *imapserver.UpdateWriter, expunge bool) error {
+func (handle *MailboxHandle[MailboxKey]) Sync(to UpdateWriter, expunge bool) error {
 	if handle.management {
 		return nil
 	}
@@ -179,7 +189,31 @@ func (handle *MailboxHandle[MailboxKey]) Sync(to *imapserver.UpdateWriter, expun
 	return handle.syncUnlocked(to, expunge)
 }
 
-func (handle *MailboxHandle[MailboxKey]) syncUnlocked(to *imapserver.UpdateWriter, expunge bool) error {
+func (handle *MailboxHandle[MailboxKey]) SyncSingleExpunge(to ExpungeWriter, expungeSet imap.UIDSet) error {
+	handle.lock.Lock()
+	defer handle.lock.Unlock()
+
+	expunged := make([]uint32, 0, 16)
+	newMap := handle.uidMap[:0] /* SliceTricks: filtering without allocations */
+	for i, uid := range handle.uidMap {
+		if expungeSet.Contains(uid) {
+			expunged = append(expunged, uint32(i+1))
+			continue
+		}
+		newMap = append(newMap, uid)
+	}
+	handle.uidMap = newMap
+
+	for i := len(expunged) - 1; i >= 0; i-- {
+		if err := to.WriteExpunge(expunged[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (handle *MailboxHandle[MailboxKey]) syncUnlocked(to UpdateWriter, expunge bool) error {
 	for _, upd := range handle.pendingFlags {
 		seq, ok := uidToSeq(handle.uidMap, imap.UIDRange{Start: upd.uid, Stop: upd.uid})
 		if !ok {
@@ -319,7 +353,7 @@ func (handle *MailboxHandle[MailboxKey]) idleUpdate() {
 
 // Removed performs all necessary update dispatching actions
 // for a specified removed message.
-func (handle *MailboxHandle[MailboxKey]) Removed(uid imap.UID) {
+func (handle *MailboxHandle[MailboxKey]) Removed(uid imap.UID, skipSelf bool) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update[MailboxKey]{
 			Type:   UpdRemoved,
@@ -336,6 +370,10 @@ func (handle *MailboxHandle[MailboxKey]) Removed(uid imap.UID) {
 	defer handle.shared.handlesLock.RUnlock()
 
 	for hndl := range handle.shared.handles {
+		if hndl == handle && skipSelf {
+			continue
+		}
+
 		hndl.lock.Lock()
 		hndl.pendingExpunge.AddNum(uid)
 		hndl.idleUpdate()
@@ -343,7 +381,7 @@ func (handle *MailboxHandle[MailboxKey]) Removed(uid imap.UID) {
 	}
 }
 
-func (handle *MailboxHandle[MailboxKey]) RemovedSet(seq imap.UIDSet) {
+func (handle *MailboxHandle[MailboxKey]) RemovedSet(seq imap.UIDSet, skipSelf bool) {
 	if handle.m.sink != nil {
 		handle.m.sink <- Update[MailboxKey]{
 			Type:   UpdRemoved,
@@ -360,6 +398,10 @@ func (handle *MailboxHandle[MailboxKey]) RemovedSet(seq imap.UIDSet) {
 	defer handle.shared.handlesLock.RUnlock()
 
 	for hndl := range handle.shared.handles {
+		if handle == hndl && skipSelf {
+			continue
+		}
+
 		hndl.lock.Lock()
 		hndl.pendingExpunge.AddSet(seq)
 		hndl.idleUpdate()
